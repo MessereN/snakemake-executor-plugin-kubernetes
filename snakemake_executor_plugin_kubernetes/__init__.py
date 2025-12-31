@@ -6,6 +6,9 @@ import subprocess
 import time
 from typing import Any, AsyncGenerator, List, Optional, Self
 import uuid
+import os
+import json
+
 
 import kubernetes
 import kubernetes.config
@@ -153,6 +156,64 @@ class Executor(RemoteExecutor):
         self.privileged = self.workflow.executor_settings.privileged
         self.persistent_volumes = self.workflow.executor_settings.persistent_volumes
 
+        # Extra scheduling hints from environment variables.
+        # These allow you to force jobs to certain node pools and taints
+        # without hard-coding cluster details into the plugin.
+        self.extra_node_selector = {}
+        self.extra_tolerations = []
+
+        node_selector_env = os.getenv("SNAKEMAKE_K8S_NODE_SELECTOR")
+        if node_selector_env:
+            try:
+                parsed = json.loads(node_selector_env)
+                if not isinstance(parsed, dict):
+                    raise WorkflowError(
+                        "SNAKEMAKE_K8S_NODE_SELECTOR must be a JSON object, "
+                        f"got: {type(parsed)}"
+                    )
+                self.extra_node_selector = parsed
+                self.logger.info(
+                    f"Using extra nodeSelector from SNAKEMAKE_K8S_NODE_SELECTOR: "
+                    f"{self.extra_node_selector}"
+                )
+            except json.JSONDecodeError as e:
+                raise WorkflowError(
+                    f"Invalid JSON in SNAKEMAKE_K8S_NODE_SELECTOR: {e}"
+                )
+
+        tolerations_env = os.getenv("SNAKEMAKE_K8S_TOLERATIONS")
+        if tolerations_env:
+            try:
+                parsed = json.loads(tolerations_env)
+                if not isinstance(parsed, list):
+                    raise WorkflowError(
+                        "SNAKEMAKE_K8S_TOLERATIONS must be a JSON list, "
+                        f"got: {type(parsed)}"
+                    )
+                for t in parsed:
+                    if not isinstance(t, dict):
+                        raise WorkflowError(
+                            "Each item in SNAKEMAKE_K8S_TOLERATIONS must be "
+                            f"a JSON object, got: {type(t)}"
+                        )
+                    self.extra_tolerations.append(
+                        kubernetes.client.V1Toleration(
+                            key=t.get("key"),
+                            operator=t.get("operator"),
+                            value=t.get("value"),
+                            effect=t.get("effect"),
+                        )
+                    )
+                self.logger.info(
+                    "Using extra tolerations from SNAKEMAKE_K8S_TOLERATIONS: "
+                    f"{self.extra_tolerations}"
+                )
+            except json.JSONDecodeError as e:
+                raise WorkflowError(
+                    f"Invalid JSON in SNAKEMAKE_K8S_TOLERATIONS: {e}"
+                )
+
+
         self.logger.info(f"Using {self.container_image} for Kubernetes jobs.")
 
     def run_job(self, job: JobExecutorInterface):
@@ -196,7 +257,9 @@ class Executor(RemoteExecutor):
             )
 
         # Node selector
-        node_selector = {}
+        # Start from any global selector configured via env var,
+        # then optionally refine with a machine_type resource from the rule.
+        node_selector = dict(self.extra_node_selector) if self.extra_node_selector else {}
         if "machine_type" in resources_dict.keys():
             node_selector["node.kubernetes.io/instance-type"] = resources_dict[
                 "machine_type"
@@ -205,7 +268,9 @@ class Executor(RemoteExecutor):
 
         # Initialize PodSpec
         pod_spec = kubernetes.client.V1PodSpec(
-            containers=[container], node_selector=node_selector, restart_policy="Never"
+            containers=[container],
+            node_selector=node_selector if node_selector else None,
+            restart_policy="Never",
         )
         body.spec = kubernetes.client.V1JobSpec(
             backoff_limit=0,
@@ -369,6 +434,16 @@ class Executor(RemoteExecutor):
                 container.resources.requests["nvidia.com/gpu"] = gpu_count
                 if not scale_value:
                     container.resources.limits["nvidia.com/gpu"] = gpu_count
+
+        # Add any globally configured tolerations (e.g. for burst-pool taints)
+        if self.extra_tolerations:
+            if pod_spec.tolerations is None:
+                pod_spec.tolerations = []
+            pod_spec.tolerations.extend(self.extra_tolerations)
+            self.logger.debug(
+                f"Applied extra tolerations from env: {pod_spec.tolerations}"
+            )
+
         # Privileged mode
         if self.privileged:
             container.security_context = kubernetes.client.V1SecurityContext(
