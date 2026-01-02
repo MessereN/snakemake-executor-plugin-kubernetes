@@ -218,27 +218,25 @@ class Executor(RemoteExecutor):
         )
 
         # ---------------------------------------------------------------------
-        # Base toleration for workload taint from resources (workload_taint)
+        # Base toleration for workload taint from resources (node_taint)
         # ---------------------------------------------------------------------
-        # This is what lets your jobs land on nodes tainted with:
-        #   --node-taints=workload=snakemake:NoSchedule
-        if "workload_taint" in resources_dict:
+        if "node_taint" in resources_dict:
             if pod_spec.tolerations is None:
                 pod_spec.tolerations = []
+            toleration = str(resources_dict["node_taint"])
+            key, rest = toleration.split("=", 1)
+            value, effect = rest.split(":", 1)
             pod_spec.tolerations.append(
                 kubernetes.client.V1Toleration(
-                    key="workload",
-                    operator="Equal",
-                    value=str(resources_dict["workload_taint"]),
-                    effect=str(
-                        resources_dict.get("workload_taint_effect", "NoSchedule")
-                    ),
+                    key = key,
+                    operator = "Equal",
+                    value = value,
+                    effect = effect
                 )
             )
             self.logger.debug(
                 "Added workload taint toleration: "
-                f"workload={resources_dict['workload_taint']}, "
-                f"effect={resources_dict.get('workload_taint_effect', 'NoSchedule')}"
+                f"workload={resources_dict['node_taint']}"
             )
         # Add toleration for GPU nodes if GPU is requested
         if "gpu" in resources_dict:
