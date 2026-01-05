@@ -224,8 +224,15 @@ class Executor(RemoteExecutor):
             if pod_spec.tolerations is None:
                 pod_spec.tolerations = []
             toleration = str(resources_dict["node_taint"])
-            key, rest = toleration.split("=", 1)
-            value, effect = rest.split(":", 1)
+            try:
+                key, rest = toleration.split("=", 1)
+                value, effect = rest.split(":", 1)
+            except ValueError:
+                raise WorkflowError(
+                    f"Invalid node_taint format: '{toleration}'. "
+                    "Expected format: key=value:effect"
+                )
+
             if key == "" or value == "" or effect == "":
                 raise WorkflowError(
                     "Invalid node_taint format. "
