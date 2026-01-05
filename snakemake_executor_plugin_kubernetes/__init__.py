@@ -226,6 +226,17 @@ class Executor(RemoteExecutor):
             toleration = str(resources_dict["node_taint"])
             key, rest = toleration.split("=", 1)
             value, effect = rest.split(":", 1)
+            if key == "" or value == "" or effect == "":
+                raise WorkflowError(
+                    "Invalid node_taint format. "
+                    "Expected format: key=value:effect"
+                )
+            if effect not in ["NoSchedule", "PreferNoSchedule", "NoExecute"]:
+                raise WorkflowError(
+                    "Invalid effect in node_taint. "
+                    "Expected one of NoSchedule, PreferNoSchedule, NoExecute."
+                )
+            
             pod_spec.tolerations.append(
                 kubernetes.client.V1Toleration(
                     key = key,
