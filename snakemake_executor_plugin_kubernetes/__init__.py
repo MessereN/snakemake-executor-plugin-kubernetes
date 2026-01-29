@@ -243,13 +243,12 @@ class Executor(RemoteExecutor):
                     "Invalid effect in node_taint. "
                     "Expected one of NoSchedule, PreferNoSchedule, NoExecute."
                 )
-            
             pod_spec.tolerations.append(
                 kubernetes.client.V1Toleration(
-                    key = key,
-                    operator = "Equal",
-                    value = value,
-                    effect = effect
+                    key=key,
+                    operator="Equal",
+                    value=value,
+                    effect=effect
                 )
             )
             self.logger.debug(
@@ -303,26 +302,11 @@ class Executor(RemoteExecutor):
                     f"Unsupported GPU manufacturer '{manufacturer}'. "
                     "Must be 'nvidia' or 'amd'."
                 )
-
         # capabilities
-        if (
-            job.is_containerized
-            and DeploymentMethod.APPTAINER
+        if self.privileged or (
+            DeploymentMethod.APPTAINER
             in self.workflow.deployment_settings.deployment_method
         ):
-            # TODO this should work, but it doesn't currently because of
-            # missing loop devices
-            # singularity inside docker requires SYS_ADMIN capabilities
-            # see
-            # https://groups.google.com/a/lbl.gov/forum/#!topic/singularity/e9mlDuzKowc
-            # container.capabilities = kubernetes.client.V1Capabilities()
-            # container.capabilities.add = ["SYS_ADMIN",
-            #                               "DAC_OVERRIDE",
-            #                               "SETUID",
-            #                               "SETGID",
-            #                               "SYS_CHROOT"]
-
-            # Running in priviledged mode always works
             container.security_context = kubernetes.client.V1SecurityContext(
                 privileged=True
             )
